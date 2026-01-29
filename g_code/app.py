@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""G Code - minimal claude code alternative (OpenAI Compatible + XML + Streaming + Chunked Writing + Auto-Retry + Pre-Check + @References + Tab Completion + Structure Awareness + Interrupt Support + Copy/Move + Current Directory CWD)"""
+"""G Code - minimal claude code alternative (OpenAI Compatible + XML + Streaming + Chunked Writing + Auto-Retry + Pre-Check + @References + Tab Completion + Structure Awareness + Interrupt Support + Copy/Move + Current Directory CWD + Smart Read + Forced Chunking + Anti-Loop + Project Init + False Positive Fix + Claude-Style Config)"""
 
 import glob as globlib, json, os, re, subprocess, platform
 import shutil # For copy and move operations
@@ -18,10 +18,42 @@ except ImportError:
 # Load environment variables from .env file
 load_dotenv()
 
-# --- Configuration ---
-API_KEY = os.environ.get("BYTARCH_API_KEY")
+# --- CONFIGURATION SETUP ---
+# Determine the directory where this script is located
+APP_PATH = os.path.dirname(os.path.abspath(__file__))
+CONFIG_DIR = os.path.join(APP_PATH, ".config")
+CONFIG_FILE = os.path.join(CONFIG_DIR, "settings.json")
+
+# Ensure the .config directory exists
+os.makedirs(CONFIG_DIR, exist_ok=True)
+
+def load_user_config():
+    """Loads API_KEY and MODEL from the config file if it exists."""
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"{YELLOW}⚠ Warning: Could not load config file: {e}{RESET}")
+    return {}
+
+def save_user_config(api_key, model):
+    """Saves API_KEY and MODEL to the config file."""
+    config = {
+        "API_KEY": api_key,
+        "MODEL": model
+    }
+    try:
+        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+            json.dump(config, f, indent=4)
+    except Exception as e:
+        print(f"{RED}Error saving config: {e}{RESET}")
+
+# Load configuration (Priority: Config File > Environment Variables > Defaults)
+loaded_config = load_user_config()
+API_KEY = loaded_config.get("API_KEY") or os.environ.get("BYTARCH_API_KEY")
 API_URL = "https://api.bytarch.dpdns.org/openai/v1/chat/completions"
-MODEL = os.environ.get("MODEL", "kwaipilot/kat-coder-pro")
+MODEL = loaded_config.get("MODEL") or os.environ.get("MODEL", "kwaipilot/kat-coder-pro")
 
 # Context Configuration
 MAX_TOKENS = int(os.environ.get("MAX_TOKENS", "4096"))
@@ -32,7 +64,10 @@ ENABLE_FUNCTION_CALLING = False
 
 # --- CHUNKING STRATEGY ---
 DEFAULT_READ_LIMIT = 100 
-REF_READ_LIMIT = 2000 
+# Reduced to prevent context spam when using @. Large files should be read explicitly.
+REF_READ_LIMIT = 150 
+# Hard cap for the read tool to force iterative reading
+MAX_READ_LINES_PER_CALL = 100 
 
 # ANSI colors
 RESET, BOLD, DIM = "\033[0m", "\033[1m", "\033[2m"
@@ -142,8 +177,9 @@ def resolve_references(text, base_dir):
                 with open(path, 'r', encoding='utf-8') as f:
                     content = f.read()
                 
+                # Smart Truncation for @ references
                 if len(content) > REF_READ_LIMIT:
-                    content = content[:REF_READ_LIMIT] + "\n... [CONTEXT TRUNCATED - FILE TOO LARGE FOR PROMPT] ..."
+                    content = content[:REF_READ_LIMIT] + f"\n... [CONTEXT TRUNCATED: {REF_READ_LIMIT} lines shown. File is large. Use the 'read' tool with 'offset' to inspect the rest.] ..."
                 
                 content = content.strip()
                 extra_context.append(f"<file_context name=\"{ref}\">\n{content}\n</file_context>")
@@ -186,19 +222,50 @@ def read(args):
     path = raw_path if os.path.isabs(raw_path) else os.path.join(base_dir, raw_path)
     
     try:
+        # Load all lines into memory to allow for search/indexing
         lines = open(path, 'r', encoding='utf-8').readlines()
     except FileNotFoundError:
         return "error: file not found"
     except UnicodeDecodeError:
         return "error: file encoding issue (not utf-8)"
 
-    offset = args.get("offset", 0)
-    limit = args.get("limit", DEFAULT_READ_LIMIT)
+    # --- SMART SEARCH LOGIC ---
+    search_term = args.get("search")
+    
+    if search_term:
+        # Find the first occurrence of the search term
+        found_line_idx = -1
+        for idx, line in enumerate(lines):
+            if search_term in line:
+                found_line_idx = idx
+                break
+        
+        if found_line_idx == -1:
+            return f"error: search term '{search_term}' not found in file"
+        
+        # Center the read window around the found line
+        # Default context window: 25 lines before, 25 lines after (50 total)
+        context_buffer = 25 
+        offset = max(0, found_line_idx - context_buffer)
+        limit = 50 
+    else:
+        # Standard Manual Read
+        offset = args.get("offset", 0)
+        # Enforce Hard Cap to ensure chunking
+        limit = args.get("limit", DEFAULT_READ_LIMIT)
+        
+    # STRICT CHUNKING: Never return more than MAX_READ_LINES_PER_CALL
+    if limit > MAX_READ_LINES_PER_CALL:
+        limit = MAX_READ_LINES_PER_CALL
+
     selected = lines[offset : offset + limit]
     
     hint = ""
-    if offset + limit < len(lines):
-        hint = f"\n[... {len(lines) - (offset + limit)} more lines (use offset/limit to read more) ...]"
+    remaining_lines = len(lines) - (offset + limit)
+    
+    if remaining_lines > 0:
+        next_offset = offset + limit
+        hint = f"\n[... {remaining_lines} MORE LINES REMAINING ...]\n[Action Required: Use 'read' tool with 'offset={next_offset}' to read the next chunk.]"
         
     return "".join(f"{offset + idx + 1:4}| {line}" for idx, line in enumerate(selected)) + hint
 
@@ -390,8 +457,10 @@ def finish(args):
 
 TOOLS = {
     "read": (
-        "Read file. Use 'offset' and 'limit' (default 100) to read large files in chunks.",
-        {"path": "string", "offset": "number?", "limit": "number?"},
+        "Read file. Hard capped at 100 lines per call. "
+        "Use 'offset' to paginate through the file. "
+        "SMART READ: Use 'search' parameter to find a specific function/class (centers view around match).",
+        {"path": "string", "offset": "number?", "limit": "number?", "search": "string?"},
         read,
     ),
     "write": (
@@ -636,6 +705,9 @@ def separator():
 
 
 def main():
+    # Allow modifying global variables inside this function
+    global API_KEY, MODEL
+    
     os_type = platform.system()
     fc_status = "Enabled" if ENABLE_FUNCTION_CALLING else "Disabled (XML Only)"
     
@@ -672,6 +744,7 @@ def main():
             "<bash>{\"command\": \"ls -la\"}</bash>\n"
             "<bash>{\"command\": \"mkdir -p new_folder\"}</bash>\n"
             "<read>{\"path\": \"file.py\"}</read>\n"
+            "<read>{\"path\": \"file.py\", \"search\": \"def my_function\"}</read> (Smart Search)\n"
             "<edit>{\"path\": \"file.py\", \"old\": \"old text\", \"new\": \"new text\"}</edit>\n"
             "<edit>{\"path\": \"file.py\", \"old\": \"bad text\", \"new\": \"\"}</edit> (to delete)\n"
             "<write>{\"path\": \"newfile.html\", \"content\": \"<html>...</html>\"}</write>\n"
@@ -707,29 +780,76 @@ def main():
         "   - EXCEPTION: You can use <copy> or <move> to transfer large files efficiently.\n"
         "8. CHUNKED EDITING (MANDATORY):\n"
         "   - Use 'edit' on small sections (10-30 lines). Do not replace whole functions.\n"
-        "9. PRE-WRITE/EDIT VERIFICATION (MANDATORY):\n"
+        "9. INTELLIGENT READING (MANDATORY):\n"
+        "   - **SMART READ**: When you need to inspect a specific function, class, or method, use the 'read' tool with the 'search' parameter.\n"
+        "   - Example: <read>{\"path\": \"app.py\", \"search\": \"def main\"}</read>\n"
+        "   - The tool will automatically find the line and center the context (50 lines) around it.\n"
+        "   - Use this instead of reading the whole file or guessing line numbers.\n"
+        "10. PRE-WRITE/EDIT VERIFICATION (MANDATORY):\n"
         "   - BEFORE 'write' or 'edit': You MUST verify existence of the target file and directory.\n"
         "   - DIRECTORY CHECK: If the directory does not exist, create it immediately using: "
         "<bash>{\"command\": \"mkdir -p path/to/dir\"}</bash>\n"
         "   - FILE CHECK: Use <bash>{\"command\": \"ls filename\"}</bash> or similar to check if the file exists.\n"
         "   - IF THE FILE EXISTS: USE 'edit'. Do NOT use 'write' (it destroys data).\n"
         "   - IF THE FILE DOES NOT EXIST: USE 'write'.\n"
-        "10. TOOL ARGUMENT NAMES (MANDATORY):\n"
+        "11. TOOL ARGUMENT NAMES (MANDATORY):\n"
         "   - For 'copy' and 'move': Use 'src' and 'dest'.\n"
         "   - For 'edit': You MUST use keys 'old' and 'new'. Do NOT use 'old_string' or 'new_string'.\n"
         "   - For 'write': You MUST use key 'content' (or 'append_content'). Do NOT use 'string'.\n"
-        "11. ERROR HANDLING (MANDATORY):\n"
+        "12. ERROR HANDLING (MANDATORY):\n"
         "   - If a tool returns an 'error', STOP and ANALYZE.\n"
         "   - You MUST NOT blindly retry the exact same command.\n"
-        "   - If 'old_string not found', use `read` or `grep` to find the exact string.\n"
+        "   - If 'old_string not found', use `read` with `search` to find the exact string.\n"
         "   - If 'directory not found', create it with mkdir.\n"
-        "12. TASK COMPLETION (MANDATORY):\n"
+        "13. ANTI-LOOP PROTECTION (CRITICAL):\n"
+        "   - **DO NOT REPEAT COMMANDS**. If you run the same tool with the same arguments twice in a row, the system will terminate.\n"
+        "   - Pay attention to tool outputs. If a tool succeeds, move to the next step. Do not re-run it to 'check'.\n"
+        "14. .GCODE FOLDER & STANDARDS (CRITICAL):\n"
+        "   - There is a `.gcode` folder in the project root.\n"
+        "   - It contains configuration files (rules.md, context.md, prompts.md) that define how you should write code.\n"
+        "   - **STRICTLY ADHERE** to the coding standards defined in `.gcode/rules.md`.\n"
+        "   - **UNDERSTAND** the project architecture from `.gcode/context.md`.\n"
+        "   - **LEARN & UPDATE**: As you discover architectural details or patterns (e.g., 'this project uses MVC', 'this file connects to DB X'), "
+        "YOU MUST UPDATE `.gcode/context.md` to document this knowledge so future sessions are consistent.\n"
+        "15. TASK COMPLETION (MANDATORY):\n"
         "   - YOU MUST CALL THE 'finish' TOOL WHEN THE TASK IS DONE.\n"
         "   - Do NOT stop the conversation by simply writing text. You MUST invoke 'finish'.\n"
         "----------------------------------------\n\n"
         f"{tool_instruction}\n"
         f"{tool_examples}"
     )
+
+    # Helper to load project context from .gcode
+    def load_gcode_context(base_dir):
+        gcode_dir = os.path.join(base_dir, ".gcode")
+        if not os.path.exists(gcode_dir):
+            return None
+        
+        context_parts = []
+        # We want to load rules first, then context, then prompts
+        files_to_load = ['rules.md', 'context.md', 'prompts.md']
+        
+        for fname in files_to_load:
+            fpath = os.path.join(gcode_dir, fname)
+            if os.path.exists(fpath):
+                try:
+                    with open(fpath, "r", encoding="utf-8") as f:
+                        content = f.read()
+                        if content:
+                            # Tag the content based on file name
+                            tag = fname.replace('.md', '')
+                            context_parts.append(f"<gcode_{tag}>\n{content}\n</gcode_{tag}>")
+                except Exception as e:
+                    pass
+        
+        if context_parts:
+            return "\n\n".join(context_parts)
+        return None
+
+    # Load initial project context if available
+    initial_context = load_gcode_context(SCRIPT_DIR)
+    if initial_context:
+        messages.append({"role": "system", "content": initial_context})
 
     while True:
         try:
@@ -748,6 +868,117 @@ def main():
             if user_input == "/c":
                 messages = []
                 print(f"{GREEN}⏺ Cleared conversation{RESET}")
+                # Reload context after clearing
+                initial_context = load_gcode_context(SCRIPT_DIR)
+                if initial_context:
+                    messages.append({"role": "system", "content": initial_context})
+                continue
+            
+            # --- NEW: /init COMMAND (Enhanced) ---
+            if user_input == "/init":
+                gcode_dir = os.path.join(SCRIPT_DIR, ".gcode")
+                if not os.path.exists(gcode_dir):
+                    os.makedirs(gcode_dir)
+                    print(f"{GREEN}✔ Created .gcode folder{RESET}")
+                else:
+                    print(f"{YELLOW}✔ .gcode folder already exists{RESET}")
+
+                # Create rules.md
+                rules_file = os.path.join(gcode_dir, "rules.md")
+                if not os.path.exists(rules_file):
+                    with open(rules_file, "w", encoding="utf-8") as f:
+                        f.write("""# Coding Rules
+- Follow the existing code style.
+- Use logging instead of print. Include error context.
+- Add type hints and docstrings for public functions.
+- Keep functions small; prefer composition over long scripts.
+- Write safe defaults. Handle timeouts and retries where external calls exist.
+# Tests
+- Provide a minimal test when adding new modules.
+- Use fakes or fixtures; do not call real services.
+# Security
+- Never include secrets in code or examples.
+- Use environment variables or placeholders like <API_KEY>.
+""")
+                    print(f"{GREEN}✔ Created .gcode/rules.md{RESET}")
+                else:
+                    print(f"{DIM}✔ .gcode/rules.md already exists.{RESET}")
+
+                # Create context.md
+                context_file = os.path.join(gcode_dir, "context.md")
+                if not os.path.exists(context_file):
+                    with open(context_file, "w", encoding="utf-8") as f:
+                        f.write("""# Project Context
+This is a [Project Type/Description].
+
+## Main Components
+- [Component 1]
+- [Component 2]
+
+## Tech Stack
+- Runtime: [e.g., Python 3.11, Node 20]
+- Dependencies: [List key packages]
+- Tools: [Docker, Makefile, etc.]
+
+## Conventions
+- Config via environment variables.
+- Error handling with structured logs.
+- CI runs tests and lint on every PR.
+""")
+                    print(f"{GREEN}✔ Created .gcode/context.md{RESET}")
+                else:
+                    print(f"{DIM}✔ .gcode/context.md already exists.{RESET}")
+
+                # Create prompts.md
+                prompts_file = os.path.join(gcode_dir, "prompts.md")
+                if not os.path.exists(prompts_file):
+                    with open(prompts_file, "w", encoding="utf-8") as f:
+                        f.write("""# Reusable Prompts
+## Add a module
+Create a new module that does X. Include:
+- A clear, typed interface
+- Error handling and logging
+- A small unit test with a fake
+
+## Improve performance
+Review this function for bottlenecks. Propose changes.
+Explain trade-offs in 3-5 bullet points.
+
+## Write docs
+Draft README instructions for running the project locally:
+- Prerequisites
+- Setup
+- Common commands
+- How to run tests
+""")
+                    print(f"{GREEN}✔ Created .gcode/prompts.md{RESET}")
+                else:
+                    print(f"{DIM}✔ .gcode/prompts.md already exists.{RESET}")
+                
+                print(f"{DIM}  Please fill out these files to guide the AI agent.{RESET}")
+                continue
+            
+            # --- NEW: CONFIGURATION COMMANDS ---
+            if user_input.startswith("/model "):
+                parts = user_input.split(" ", 1)
+                if len(parts) > 1:
+                    MODEL = parts[1].strip()
+                    save_user_config(API_KEY, MODEL)
+                    print(f"{GREEN}✔ Model updated to: {MODEL}{RESET}")
+                    print(f"{DIM}  Saved to {CONFIG_FILE}{RESET}")
+                else:
+                    print(f"{YELLOW}Usage: /model <model_name>{RESET}")
+                continue
+                
+            if user_input.startswith("/key "):
+                parts = user_input.split(" ", 1)
+                if len(parts) > 1:
+                    API_KEY = parts[1].strip()
+                    save_user_config(API_KEY, MODEL)
+                    print(f"{GREEN}✔ API Key updated.{RESET}")
+                    print(f"{DIM}  Saved to {CONFIG_FILE}{RESET}")
+                else:
+                    print(f"{YELLOW}Usage: /key <api_key>{RESET}")
                 continue
 
             # --- RESOLVE @ REFERENCES ---
@@ -765,6 +996,9 @@ def main():
             
             # Track consecutive failures to stop infinite loops
             consecutive_failures = 0
+            # Track repetitive tool calls to stop "stuck" loops
+            last_tool_signature = None
+            repeat_counter = 0
             
             while True:
                 try:
@@ -808,13 +1042,28 @@ def main():
                                 task_finished = True
                                 break
 
+                            # --- NEW: REPETITIVE LOOP DETECTOR ---
+                            current_signature = json.dumps({tool_name: tool_args}, sort_keys=True)
+                            if current_signature == last_tool_signature:
+                                repeat_counter += 1
+                                if repeat_counter >= 2:
+                                    print(f"{RED}\n⏺ AGENT STOPPED: Repetitive Loop Detected.{RESET}")
+                                    print(f"{YELLOW}Reason: Tool '{tool_name}' called 3 times consecutively with identical arguments.{RESET}")
+                                    task_finished = True
+                                    break
+                            else:
+                                repeat_counter = 0
+                                last_tool_signature = current_signature
+
                             # Normal Tool Handling
                             arg_preview = str(list(tool_args.values())[0])[:50]
                             
                             result = run_tool(tool_name, tool_args)
                             
-                            # --- ERROR HANDLING & RETRY LOGIC ---
-                            if result.startswith("error:") or "error" in result.lower():
+                            # --- FIX: STRICT ERROR CHECKING ---
+                            # We use .strip().startswith("error:") to avoid false positives 
+                            # if the code content itself contains the word "error".
+                            if result.strip().startswith("error:"):
                                 consecutive_failures += 1
                                 
                                 print(f"{GREEN}⏺ {tool_name.capitalize()}{RESET}({DIM}{arg_preview}{RESET})")
@@ -834,7 +1083,7 @@ def main():
                                     "You MUST NOT repeat the exact same command. "
                                     "Analyze the error above. "
                                     "If 'Directory not found', run `mkdir -p`. "
-                                    "If 'old_string not found', use `read` or `grep` to verify the EXACT string. "
+                                    "If 'old_string not found', use `read` with `search` to verify the EXACT string. "
                                     "If it was a context/length error, break the task into smaller chunks. "
                                     "You must try a DIFFERENT approach."
                                 )
@@ -878,7 +1127,7 @@ def main():
                     print(f"\n{YELLOW}[Interrupted]{RESET} User stopped the agent. Returning to main prompt...")
                     break
                 
-                # If task_finished was set due to 3 failures, break agent loop
+                # If task_finished was set due to 3 failures or loops, break agent loop
                 if task_finished:
                     break
 
