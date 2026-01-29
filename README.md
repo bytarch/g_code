@@ -67,7 +67,7 @@ Development
 
 If you want to contribute or customize the logic:
 
-Clone the repository: git clone https://github.com/your-username/g_code.git
+Clone the repository: git clone https://github.com/bytarch/g_code.git
 
 Install in editable mode: pip install -e .
 
