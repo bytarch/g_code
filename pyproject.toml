@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "g_code"
+version = "1.0.0"
+description = "Minimal AI coding assistant with streaming, auto-retry, and structural awareness."
+readme = "README.md"
+requires-python = ">=3.9"  # Updated: Modern libraries now prefer 3.9+
+license = {text = "MIT"}
+authors = [
+    {name = "BytArch", email = "bytarchbit@gmail.com"}
+]
+
+dependencies = [
+    "openai >= 2.16.0",        # Latest major version (Jan 2026)
+    "prompt-toolkit >= 3.0.52", # Stable industry standard for CLIs
+    "python-dotenv >= 1.2.1",   # Latest stable release
+]
+
+[project.scripts]
+gcode = "g_code.app:main"

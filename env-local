@@ -1,0 +1,7 @@
+BYTARCH_API_KEY=
+MODEL=kwaipilot/kat-coder-pro
+
+
+MAX_TOKENS=4096
+
+CONTEXT_WINDOW=256000 
