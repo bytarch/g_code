@@ -21,11 +21,11 @@ load_dotenv()
 # --- Configuration ---
 API_KEY = os.environ.get("BYTARCH_API_KEY")
 API_URL = "https://api.bytarch.dpdns.org/openai/v1/chat/completions"
-MODEL = os.environ.get("MODEL", "openai/gpt-oss-120b")
+MODEL = os.environ.get("MODEL", "kwaipilot/kat-coder-pro")
 
 # Context Configuration
 MAX_TOKENS = int(os.environ.get("MAX_TOKENS", "4096"))
-CONTEXT_WINDOW = int(os.environ.get("CONTEXT_WINDOW", "32000"))
+CONTEXT_WINDOW = int(os.environ.get("CONTEXT_WINDOW", "256000"))
 
 # --- FEATURE SWITCH ---
 ENABLE_FUNCTION_CALLING = False

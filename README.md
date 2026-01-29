@@ -28,7 +28,7 @@ G Code requires an OpenAI-compatible API key. You can set it up in two ways:
 Add this to your `.zshrc`, `.bashrc`, or Windows Environment Variables:
 
 ```bash
-export BYTARCH_API_KEY='your-api-key'
+set BYTARCH_API_KEY=bsk_***
 ```
 
 ### 2. .env File
@@ -36,8 +36,8 @@ export BYTARCH_API_KEY='your-api-key'
 Place a `.env` file in your working directory:
 
 ```bash
-BYTARCH_API_KEY=your-api-key
-MODEL=openai/gpt-oss-120b
+BYTARCH_API_KEY=bsk_***
+MODEL=kwaipilot/kat-coder-pro
 ```
 
 ## Usage
