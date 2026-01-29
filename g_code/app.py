@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""G Code - minimal claude code alternative (OpenAI Compatible + XML + Streaming + Chunked Writing + Auto-Retry + Pre-Check + @References + Tab Completion + Structure Awareness + Interrupt Support + Copy/Move + Current Directory CWD + Smart Read + Forced Chunking + Anti-Loop + Project Init + False Positive Fix + Claude-Style Config)"""
+"""G Code - minimal claude code alternative (OpenAI Compatible + XML + Streaming + Chunked Writing + Auto-Retry + Pre-Check + @References + Tab Completion + Structure Awareness + Interrupt Support + Copy/Move + Current Directory CWD + Smart Read + Forced Chunking + Anti-Loop + Project Init + False Positive Fix + Claude-Style Config + Sequential Execution)"""
 
 import glob as globlib, json, os, re, subprocess, platform
 import shutil # For copy and move operations
@@ -781,7 +781,7 @@ def main():
         "8. CHUNKED EDITING (MANDATORY):\n"
         "   - Use 'edit' on small sections (10-30 lines). Do not replace whole functions.\n"
         "9. INTELLIGENT READING (MANDATORY):\n"
-        "   - **SMART READ**: When you need to inspect a specific function, class, or method, use the 'read' tool with the 'search' parameter.\n"
+        "   - **SMART READ**: When you need to inspect a specific function, class, or method, use the 'read' tool with 'search' parameter.\n"
         "   - Example: <read>{\"path\": \"app.py\", \"search\": \"def main\"}</read>\n"
         "   - The tool will automatically find the line and center the context (50 lines) around it.\n"
         "   - Use this instead of reading the whole file or guessing line numbers.\n"
@@ -802,16 +802,21 @@ def main():
         "   - If 'old_string not found', use `read` with `search` to find the exact string.\n"
         "   - If 'directory not found', create it with mkdir.\n"
         "13. ANTI-LOOP PROTECTION (CRITICAL):\n"
-        "   - **DO NOT REPEAT COMMANDS**. If you run the same tool with the same arguments twice in a row, the system will terminate.\n"
+        "   - **DO NOT REPEAT COMMANDS**. If you run the same tool with the same arguments twice in a row, the system will block it.\n"
         "   - Pay attention to tool outputs. If a tool succeeds, move to the next step. Do not re-run it to 'check'.\n"
         "14. .GCODE FOLDER & STANDARDS (CRITICAL):\n"
-        "   - There is a `.gcode` folder in the project root.\n"
-        "   - It contains configuration files (rules.md, context.md, prompts.md) that define how you should write code.\n"
+        "   - There is a `.gcode` folder in the project root containing `rules.md`, `context.md`, and `prompts.md`.\n"
+        "   - It contains configuration files that define how you should write code.\n"
         "   - **STRICTLY ADHERE** to the coding standards defined in `.gcode/rules.md`.\n"
         "   - **UNDERSTAND** the project architecture from `.gcode/context.md`.\n"
         "   - **LEARN & UPDATE**: As you discover architectural details or patterns (e.g., 'this project uses MVC', 'this file connects to DB X'), "
         "YOU MUST UPDATE `.gcode/context.md` to document this knowledge so future sessions are consistent.\n"
-        "15. TASK COMPLETION (MANDATORY):\n"
+        "15. SEQUENTIAL EXECUTION (MANDATORY):\n"
+        "   - **CRITICAL**: Execute tools **ONE AT A TIME**.\n"
+        "   - Wait for the tool result to complete before generating the next tool call.\n"
+        "   - DO NOT output multiple <tool> tags in a single response unless you are 100% certain they are independent sequential steps (e.g., create folder -> write file).\n"
+        "   - If you output multiple tools with the same name/arguments, the system will block the redundant ones.\n"
+        "16. TASK COMPLETION (MANDATORY):\n"
         "   - YOU MUST CALL THE 'finish' TOOL WHEN THE TASK IS DONE.\n"
         "   - Do NOT stop the conversation by simply writing text. You MUST invoke 'finish'.\n"
         "----------------------------------------\n\n"
@@ -888,7 +893,7 @@ def main():
                 if not os.path.exists(rules_file):
                     with open(rules_file, "w", encoding="utf-8") as f:
                         f.write("""# Coding Rules
-- Follow the existing code style.
+- Follow existing code style.
 - Use logging instead of print. Include error context.
 - Add type hints and docstrings for public functions.
 - Keep functions small; prefer composition over long scripts.
@@ -1000,6 +1005,10 @@ Draft README instructions for running the project locally:
             last_tool_signature = None
             repeat_counter = 0
             
+            # Track the VERY LAST tool executed to prevent hallucinated duplicates in one stream
+            last_executed_tool = None
+            last_executed_args = None
+
             while True:
                 try:
                     # Context Management
@@ -1042,18 +1051,26 @@ Draft README instructions for running the project locally:
                                 task_finished = True
                                 break
 
-                            # --- NEW: REPETITIVE LOOP DETECTOR ---
-                            current_signature = json.dumps({tool_name: tool_args}, sort_keys=True)
-                            if current_signature == last_tool_signature:
-                                repeat_counter += 1
-                                if repeat_counter >= 2:
-                                    print(f"{RED}\n⏺ AGENT STOPPED: Repetitive Loop Detected.{RESET}")
-                                    print(f"{YELLOW}Reason: Tool '{tool_name}' called 3 times consecutively with identical arguments.{RESET}")
-                                    task_finished = True
-                                    break
-                            else:
-                                repeat_counter = 0
-                                last_tool_signature = current_signature
+                            # --- NEW: STRICT SEQUENTIAL EXECUTION CHECK ---
+                            # Block execution if the AI tries to run the EXACT same tool call 
+                            # immediately after just running it (hallucinated urgency).
+                            # We compare stringified args for easy comparison
+                            current_sig_str = json.dumps(tool_args, sort_keys=True)
+                            if (last_executed_tool == tool_name and 
+                                last_executed_args == current_sig_str):
+                                # We have a duplicate. Refuse execution.
+                                print(f"{RED}✗ Redundant tool call blocked: {tool_name}{RESET}")
+                                print(f"{YELLOW}  Reason: You just executed this command. Wait for the result before proceeding.{RESET}")
+                                tool_results.append({
+                                    "type": "tool_result",
+                                    "tool_use_id": block["id"],
+                                    "content": "error: Redundant tool call detected. Wait for previous result before proceeding."
+                                })
+                                continue # Skip execution, but still loop to process next blocks
+
+                            # Update last executed tracker
+                            last_executed_tool = tool_name
+                            last_executed_args = current_sig_str
 
                             # Normal Tool Handling
                             arg_preview = str(list(tool_args.values())[0])[:50]
