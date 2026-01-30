@@ -704,7 +704,6 @@ def separator():
     return f"{DIM}{'─' * min(os.get_terminal_size().columns, 80)}{RESET}"
 
 
-# --- NEW: INIT LOGIC ---
 def run_init(base_dir):
     """
     Initializes the .gcode folder and structure files.
@@ -788,7 +787,7 @@ Draft README instructions for running the project locally:
         sys_messages.append({"role": "system", "content": f"Initialized reusable prompts in `.gcode/prompts.md`."})
     else:
         sys_messages.append({"role": "system", "content": f"Using existing prompts from `.gcode/prompts.md`."})
-        
+    
     skills_dir = os.path.join(gcode_dir, "skills")
     os.makedirs(skills_dir, exist_ok=True)
     
@@ -832,7 +831,7 @@ def load_gcode_context(base_dir):
             except Exception as e:
                     pass
     
-    # NEW: Load Skills Folder
+       # NEW: Load Skills Folder
     skills_dir = os.path.join(base_dir, ".gcode", "skills")
     if os.path.exists(skills_dir):
         try:
@@ -866,16 +865,16 @@ def main():
     # Store globally for tools and completion to access
     globals()['SCRIPT_DIR'] = SCRIPT_DIR
     
-    # --- NEW: AUTO-INIT ON STARTUP ---
-    # Automatically initialize .gcode if it doesn't exist
-    init_messages = run_init(SCRIPT_DIR)
-    
     # Get Base Dir Name for display
     BASE_DIR_NAME = os.path.basename(SCRIPT_DIR)
     
     print(f"{BOLD}G Code{RESET} | {DIM}{MODEL} [BytArch] (FC: {fc_status}) | {BASE_DIR_NAME}{RESET} (CWD)\n")
     
     messages = []
+    
+    # --- NEW: AUTO-INIT ON STARTUP ---
+    # Automatically initialize .gcode if it doesn't exist
+    init_messages = run_init(SCRIPT_DIR)
     
     # Inject system messages from auto-init
     if init_messages:
@@ -944,7 +943,7 @@ def main():
         "   - The tool will automatically find the line and center the context (50 lines) around it.\n"
         "   - Use this instead of reading the whole file or guessing line numbers.\n"
         "10. PRE-WRITE/EDIT VERIFICATION (MANDATORY):\n"
-        "   - BEFORE 'write' or 'edit': You MUST verify the existence of the target file and directory.\n"
+        "   - BEFORE 'write' or 'edit': You MUST verify existence of the target file and directory.\n"
         "   - DIRECTORY CHECK: If the directory does not exist, create it immediately using: "
         "<bash>{\"command\": \"mkdir -p path/to/dir\"}</bash>\n"
         "   - FILE CHECK: Use <bash>{\"command\": \"ls filename\"}</bash> or similar to check if the file exists.\n"
@@ -1004,23 +1003,22 @@ def main():
                 messages = []
                 print(f"{GREEN}⏺ Cleared conversation{RESET}")
                 # Reload context after clearing
-                # Reloads existing config but won't auto-init unless folder is gone
-                if os.path.exists(os.path.join(SCRIPT_DIR, ".gcode")):
-                    re_init_messages = run_init(SCRIPT_DIR)
-                    for msg in re_init_messages:
-                        messages.append(msg)
+                # Reload context after clearing
+                # Re-run init to ensure context is fresh
+                re_init_messages = run_init(SCRIPT_DIR)
+                for msg in re_init_messages:
+                    messages.append(msg)
                 else:
-                    # If folder exists, just clear, don't re-init
+                    # If folder exists, just clear local messages but don't spam
                     pass 
                 continue
             
-            # --- NEW: /init COMMAND (Explicit) ---
+            # --- NEW: /init COMMAND (Enhanced) ---
             if user_input == "/init":
-                # Run init logic explicitly if user requests it (even if it exists)
+                # Simply reload context (which creates the folder if missing)
                 re_init_messages = run_init(SCRIPT_DIR)
-                if re_init_messages:
-                    for msg in re_init_messages:
-                        messages.append(msg)
+                for msg in re_init_messages:
+                    messages.append(msg)
                 continue
             
             # --- NEW: CONFIGURATION COMMANDS ---
@@ -1047,8 +1045,7 @@ def main():
                 continue
 
             # --- NEW: AUTO-LOAD GCODE CONTEXT EVERY TURN ---
-            # This ensures that AI agent reads .gcode files (rules, context, prompts) AND skills
-            # before EVERY request. 
+            # This ensures that AI agent reads .gcode files before EVERY request
             gcode_context = load_gcode_context(SCRIPT_DIR)
             if gcode_context:
                 messages.append({"role": "system", "content": gcode_context})
