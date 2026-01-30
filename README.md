@@ -6,13 +6,15 @@ G Code is a minimal, high-performance CLI AI coding assistant designed as a ligh
 ## Key Features
 
 - **Real-time Streaming**: Watch the AI think and code in real-time.
-- **Project Context (`.gcode` Folder)**: Define project-specific rules, architecture, and prompts to ensure the AI writes code that matches your team's standards.
+- **CLI-Based Configuration**: Set your API Key and Model directly from the chat interface; settings are persisted automatically.
+- **Project Context (`.gcode` Folder)**: Define project-specific rules, architecture, and prompts to ensure that the AI writes code that matches your team's standards.
+- **`.gcode/skills` Integration**: A dedicated folder for your custom implementation patterns. The AI prioritizes these patterns over generic knowledge.
 - **Smart File Reading**: Intelligently centers file reads around specific functions or classes, and automatically breaks large files into manageable chunks.
 - **XML-Based Tool Use**: Secure and structured execution of file operations, search, and bash commands.
-- **Structural Awareness**: The agent automatically loads directory listings when you reference files, helping it understand the project structure.
-- **Auto-Retry & Anti-Loop**: If a command fails, the agent analyzes the error. It also detects repetitive loops to prevent getting stuck.
+- **Structural Awareness**: The agent automatically loads directory listings when you reference files, helping it understand project structure.
+- **Auto-Retry & Anti-Loop**: If a command fails, the agent analyzes the error and self-corrects. It also detects repetitive execution loops.
 - **Rich Terminal UI**: Full tab-completion for file paths and syntax-highlighted output.
-- **Interactive Config**: Set your API Key and Model directly from the chat interface; settings are persisted automatically.
+- **Auto-Setup**: Automatically initializes the `.gcode` folder and structure files if they are missing on startup.
 
 ## Installation
 
@@ -24,25 +26,24 @@ pip install git+https://github.com/bytarch/g_code.git
 
 ## Configuration
 
-G Code requires a BytArch-compatible API key. Configuration is handled via a local config folder.
+G Code requires a BytArch-compatible API key. Configuration is handled via a local config folder created automatically next to the script.
 
 ### 1. Project Initialization (Recommended)
 
-Initialize your project to create the `.gcode` folder structure. This allows you to guide the AI agent with your specific coding standards and context.
+Initialize your project to create the `.gcode` folder structure. The agent will automatically set this up for you on every start.
 
 - **Initialize**: Run `/init` inside the G Code session.
 
 This creates a `.gcode/` folder in your working directory with the following files:
 
-- **`rules.md`**: Define coding standards (e.g., "Use logging instead of print", "Add type hints").
-- **`context.md`**: Describe the project architecture and tech stack.
+- **`rules.md`**: Define coding standards (e.g., "Use logging instead of print").
+- **`context.md`**: Describe project architecture and tech stack.
 - **`prompts.md`**: Store reusable prompt snippets for common tasks.
-
-By filling out these files, you ensure the AI agent generates code that fits your specific project style and structure.
+- **`.gcode/skills/`**: A dedicated folder for your skills. The AI agent will read this folder to understand how to implement specific features or structures.
 
 ### 2. Interactive Setup
 
-You can also set your credentials directly within the application using slash commands.
+You can also set your credentials directly within the application using slash commands. These settings are saved to a `.config` folder in the script's directory and will persist between sessions.
 
 - **Set API Key**: `/key sk-your-api-key-here`
 - **Set Model**: `/model gpt-4` (or `kwaipilot/kat-coder-pro`, etc.)
@@ -60,7 +61,7 @@ MODEL=kwaipilot/kat-coder-pro
 ### Storage Location
 
 - **Settings**: Saved to `~/.g_code/.config/settings.json` (or next to the script).
-- **Project Rules**: Saved to `./.gcode/` (inside your project directory).
+- **Project Config**: Saved to `./.gcode/` (inside your project directory).
 
 ## Usage
 
@@ -72,7 +73,7 @@ gcode
 
 ## Interactive Commands
 
-- `/init`: Initialize the `.gcode` folder with `rules.md`, `context.md`, and `prompts.md` templates.
+- `/init`: Initialize the `.gcode` folder, creating `rules.md`, `context.md`, `prompts.md`, and the `skills/` subdirectory.
 - `@path/to/file`: Read a specific file into the AI's context.
 - `@directory/`: Provide the AI with a list of all files in a directory.
 - `/key <api_key>`: Update and save your API key.

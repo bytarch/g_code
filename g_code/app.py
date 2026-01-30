@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""G Code - minimal claude code alternative (OpenAI Compatible + XML + Streaming + Chunked Writing + Auto-Retry + Pre-Check + @References + Tab Completion + Structure Awareness + Interrupt Support + Copy/Move + Current Directory CWD + Smart Read + Forced Chunking + Anti-Loop + Project Init + False Positive Fix + Claude-Style Config + Sequential Execution)"""
+"""G Code - minimal claude code alternative (OpenAI Compatible + XML + Streaming + Chunked Writing + Auto-Retry + Pre-Check + @References + Tab Completion + Structure Awareness + Interrupt Support + Copy/Move + Current Directory CWD + Smart Read + Forced Chunking + Anti-Loop + Project Init + False Positive Fix + Claude-Style Config + Sequential Execution + Auto-Context-Refresh + Skills Integration + Auto-Setup)"""
 
 import glob as globlib, json, os, re, subprocess, platform
 import shutil # For copy and move operations
@@ -704,6 +704,155 @@ def separator():
     return f"{DIM}{'─' * min(os.get_terminal_size().columns, 80)}{RESET}"
 
 
+# --- NEW: INIT LOGIC ---
+def run_init(base_dir):
+    """
+    Initializes the .gcode folder and structure files.
+    Returns: A list of system messages (or None) to be added to the context.
+    """
+    gcode_dir = os.path.join(base_dir, ".gcode")
+    if not os.path.exists(gcode_dir):
+        os.makedirs(gcode_dir)
+    
+    # Returns messages so main loop can inject them.
+    # We suppress file-by-file print output to keep startup clean, 
+    # only returning system messages ensures they are treated as "knowledge".
+    sys_messages = []
+    
+    # Create files (internal logic)
+    rules_file = os.path.join(gcode_dir, "rules.md")
+    if not os.path.exists(rules_file):
+        with open(rules_file, "w", encoding="utf-8") as f:
+            f.write("""# Coding Rules
+- Follow existing code style.
+- Use logging instead of print. Include error context.
+- Add type hints and docstrings for public functions.
+- Keep functions small; prefer composition over long scripts.
+- Write safe defaults. Handle timeouts and retries where external calls exist.
+# Tests
+- Provide a minimal test when adding new modules.
+- Use fakes or fixtures; do not call real services.
+# Security
+- Never include secrets in code or examples.
+- Use environment variables or placeholders like <API_KEY>.
+""")
+        sys_messages.append({"role": "system", "content": f"Initialized coding rules in `.gcode/rules.md`."})
+    else:
+        sys_messages.append({"role": "system", "content": f"Using existing coding rules from `.gcode/rules.md`."})
+
+    context_file = os.path.join(gcode_dir, "context.md")
+    if not os.path.exists(context_file):
+        with open(context_file, "w", encoding="utf-8") as f:
+            f.write("""# Project Context
+This is a [Project Type/Description].
+
+## Main Components
+- [Component 1]
+- [Component 2]
+
+## Tech Stack
+- Runtime: [e.g., Python 3.11, Node 20]
+- Dependencies: [List key packages]
+- Tools: [Docker, Makefile, etc.]
+
+## Conventions
+- Config via environment variables.
+- Error handling with structured logs.
+- CI runs tests and lint on every PR.
+""")
+        sys_messages.append({"role": "system", "content": f"Initialized project context in `.gcode/context.md`."})
+    else:
+        sys_messages.append({"role": "system", "content": f"Using existing project context from `.gcode/context.md`."})
+
+    prompts_file = os.path.join(gcode_dir, "prompts.md")
+    if not os.path.exists(prompts_file):
+        with open(prompts_file, "w", encoding="utf-8") as f:
+            f.write("""# Reusable Prompts
+## Add a module
+Create a new module that does X. Include:
+- A clear, typed interface
+- Error handling and logging
+- A small unit test with a fake
+
+## Improve performance
+Review this function for bottlenecks. Propose changes.
+Explain trade-offs in 3-5 bullet points.
+
+## Write docs
+Draft README instructions for running the project locally:
+- Prerequisites
+- Setup
+- Common commands
+- How to run tests
+""")
+        sys_messages.append({"role": "system", "content": f"Initialized reusable prompts in `.gcode/prompts.md`."})
+    else:
+        sys_messages.append({"role": "system", "content": f"Using existing prompts from `.gcode/prompts.md`."})
+        
+    skills_dir = os.path.join(gcode_dir, "skills")
+    os.makedirs(skills_dir, exist_ok=True)
+    
+    skills_structure = os.path.join(skills_dir, "structure.md")
+    if not os.path.exists(skills_structure):
+        with open(skills_structure, "w", encoding="utf-8") as f:
+            f.write("""# Project Skills & Structure
+Place your skills here. The AI agent will read this folder to understand how to implement specific features or structures.
+
+Place new skills as .md files (e.g., `react-component.md`, `api-route.md`).
+""")
+        sys_messages.append({"role": "system", "content": f"Initialized skills folder in `.gcode/skills/`."})
+    else:
+        sys_messages.append({"role": "system", "content": f"Using skills folder at `.gcode/skills/`."})
+    
+    if sys_messages:
+        return sys_messages
+    return None
+
+
+# --- Helper to load project context from .gcode ---
+def load_gcode_context(base_dir):
+    gcode_dir = os.path.join(base_dir, ".gcode")
+    if not os.path.exists(gcode_dir):
+        return None
+    
+    context_parts = []
+    
+    # Load standard config files
+    files_to_load = ['rules.md', 'context.md', 'prompts.md']
+    for fname in files_to_load:
+        fpath = os.path.join(gcode_dir, fname)
+        if os.path.exists(fpath):
+            try:
+                with open(fpath, "r", encoding="utf-8") as f:
+                    content = f.read()
+                    if content:
+                        # Tag content based on file name
+                        tag = fname.replace('.md', '')
+                        context_parts.append(f"<gcode_{tag}>\n{content}\n</gcode_{tag}>")
+            except Exception as e:
+                    pass
+    
+    # NEW: Load Skills Folder
+    skills_dir = os.path.join(base_dir, ".gcode", "skills")
+    if os.path.exists(skills_dir):
+        try:
+            # Load all markdown files from skills folder
+            for fname in os.listdir(skills_dir):
+                if fname.endswith(".md"):
+                    fpath = os.path.join(skills_dir, fname)
+                    with open(fpath, "r", encoding="utf-8") as f:
+                        content = f.read()
+                        if content:
+                            tag = fname.replace('.md', '')
+                            context_parts.append(f"<gcode_skill_{tag}>\n{content}\n</gcode_skill_{tag}>")
+        except Exception as e:
+            pass # Silent fail to avoid breaking if skills folder is weird
+    
+    if context_parts:
+        return "\n\n".join(context_parts)
+    return None
+
+
 def main():
     # Allow modifying global variables inside this function
     global API_KEY, MODEL
@@ -717,12 +866,21 @@ def main():
     # Store globally for tools and completion to access
     globals()['SCRIPT_DIR'] = SCRIPT_DIR
     
+    # --- NEW: AUTO-INIT ON STARTUP ---
+    # Automatically initialize .gcode if it doesn't exist
+    init_messages = run_init(SCRIPT_DIR)
+    
     # Get Base Dir Name for display
     BASE_DIR_NAME = os.path.basename(SCRIPT_DIR)
     
     print(f"{BOLD}G Code{RESET} | {DIM}{MODEL} [BytArch] (FC: {fc_status}) | {BASE_DIR_NAME}{RESET} (CWD)\n")
     
     messages = []
+    
+    # Inject system messages from auto-init
+    if init_messages:
+        for msg in init_messages:
+            messages.append(msg)
     
     session = None
     if HAS_PROMPT_TOOLKIT:
@@ -786,7 +944,7 @@ def main():
         "   - The tool will automatically find the line and center the context (50 lines) around it.\n"
         "   - Use this instead of reading the whole file or guessing line numbers.\n"
         "10. PRE-WRITE/EDIT VERIFICATION (MANDATORY):\n"
-        "   - BEFORE 'write' or 'edit': You MUST verify existence of the target file and directory.\n"
+        "   - BEFORE 'write' or 'edit': You MUST verify the existence of the target file and directory.\n"
         "   - DIRECTORY CHECK: If the directory does not exist, create it immediately using: "
         "<bash>{\"command\": \"mkdir -p path/to/dir\"}</bash>\n"
         "   - FILE CHECK: Use <bash>{\"command\": \"ls filename\"}</bash> or similar to check if the file exists.\n"
@@ -805,56 +963,28 @@ def main():
         "   - **DO NOT REPEAT COMMANDS**. If you run the same tool with the same arguments twice in a row, the system will block it.\n"
         "   - Pay attention to tool outputs. If a tool succeeds, move to the next step. Do not re-run it to 'check'.\n"
         "14. .GCODE FOLDER & STANDARDS (CRITICAL):\n"
-        "   - There is a `.gcode` folder in the project root containing `rules.md`, `context.md`, and `prompts.md`.\n"
-        "   - It contains configuration files that define how you should write code.\n"
-        "   - **STRICTLY ADHERE** to the coding standards defined in `.gcode/rules.md`.\n"
-        "   - **UNDERSTAND** the project architecture from `.gcode/context.md`.\n"
+        "   - There is a `.gcode` folder in the project root containing `rules.md`, `context.md`, `prompts.md`, and `skills/`.\n"
+        "   - **AUTOMATIC LOADING**: These files are automatically loaded BEFORE EVERY TASK.\n"
+        "   - **STRICT ADHERENCE**: You MUST adhere to coding standards defined in `.gcode/rules.md`.\n"
+        "   - **CONTEXT AWARENESS**: You MUST use architectural details from `.gcode/context.md` to guide your decisions.\n"
         "   - **LEARN & UPDATE**: As you discover architectural details or patterns (e.g., 'this project uses MVC', 'this file connects to DB X'), "
         "YOU MUST UPDATE `.gcode/context.md` to document this knowledge so future sessions are consistent.\n"
-        "15. SEQUENTIAL EXECUTION (MANDATORY):\n"
+        "15. SKILLS INTEGRATION (CRITICAL):\n"
+        "   - **ALWAYS READ**: Check `.gcode/skills/` folder for architectural guidance or boilerplate code before implementing.\n"
+        "   - **PRIORITIZE**: If a specific skill (e.g., 'FastAPI Route', 'React Component') exists in `.gcode/skills/`, you MUST use that implementation.\n"
+        "   - **LEARN**: If you establish a new project pattern (e.g., 'Our Authentication Flow', 'Our Error Handling Wrapper'), save it as a `.md` file in `.gcode/skills/` for reuse.\n"
+        "16. SEQUENTIAL EXECUTION (CRITICAL):\n"
         "   - **CRITICAL**: Execute tools **ONE AT A TIME**.\n"
         "   - Wait for the tool result to complete before generating the next tool call.\n"
         "   - DO NOT output multiple <tool> tags in a single response unless you are 100% certain they are independent sequential steps (e.g., create folder -> write file).\n"
-        "   - If you output multiple tools with the same name/arguments, the system will block the redundant ones.\n"
-        "16. TASK COMPLETION (MANDATORY):\n"
+        "   - If you output multiple tools with the same name/arguments, the system will block redundant ones.\n"
+        "17. TASK COMPLETION (MANDATORY):\n"
         "   - YOU MUST CALL THE 'finish' TOOL WHEN THE TASK IS DONE.\n"
         "   - Do NOT stop the conversation by simply writing text. You MUST invoke 'finish'.\n"
         "----------------------------------------\n\n"
         f"{tool_instruction}\n"
         f"{tool_examples}"
     )
-
-    # Helper to load project context from .gcode
-    def load_gcode_context(base_dir):
-        gcode_dir = os.path.join(base_dir, ".gcode")
-        if not os.path.exists(gcode_dir):
-            return None
-        
-        context_parts = []
-        # We want to load rules first, then context, then prompts
-        files_to_load = ['rules.md', 'context.md', 'prompts.md']
-        
-        for fname in files_to_load:
-            fpath = os.path.join(gcode_dir, fname)
-            if os.path.exists(fpath):
-                try:
-                    with open(fpath, "r", encoding="utf-8") as f:
-                        content = f.read()
-                        if content:
-                            # Tag the content based on file name
-                            tag = fname.replace('.md', '')
-                            context_parts.append(f"<gcode_{tag}>\n{content}\n</gcode_{tag}>")
-                except Exception as e:
-                    pass
-        
-        if context_parts:
-            return "\n\n".join(context_parts)
-        return None
-
-    # Load initial project context if available
-    initial_context = load_gcode_context(SCRIPT_DIR)
-    if initial_context:
-        messages.append({"role": "system", "content": initial_context})
 
     while True:
         try:
@@ -874,93 +1004,23 @@ def main():
                 messages = []
                 print(f"{GREEN}⏺ Cleared conversation{RESET}")
                 # Reload context after clearing
-                initial_context = load_gcode_context(SCRIPT_DIR)
-                if initial_context:
-                    messages.append({"role": "system", "content": initial_context})
+                # Reloads existing config but won't auto-init unless folder is gone
+                if os.path.exists(os.path.join(SCRIPT_DIR, ".gcode")):
+                    re_init_messages = run_init(SCRIPT_DIR)
+                    for msg in re_init_messages:
+                        messages.append(msg)
+                else:
+                    # If folder exists, just clear, don't re-init
+                    pass 
                 continue
             
-            # --- NEW: /init COMMAND (Enhanced) ---
+            # --- NEW: /init COMMAND (Explicit) ---
             if user_input == "/init":
-                gcode_dir = os.path.join(SCRIPT_DIR, ".gcode")
-                if not os.path.exists(gcode_dir):
-                    os.makedirs(gcode_dir)
-                    print(f"{GREEN}✔ Created .gcode folder{RESET}")
-                else:
-                    print(f"{YELLOW}✔ .gcode folder already exists{RESET}")
-
-                # Create rules.md
-                rules_file = os.path.join(gcode_dir, "rules.md")
-                if not os.path.exists(rules_file):
-                    with open(rules_file, "w", encoding="utf-8") as f:
-                        f.write("""# Coding Rules
-- Follow existing code style.
-- Use logging instead of print. Include error context.
-- Add type hints and docstrings for public functions.
-- Keep functions small; prefer composition over long scripts.
-- Write safe defaults. Handle timeouts and retries where external calls exist.
-# Tests
-- Provide a minimal test when adding new modules.
-- Use fakes or fixtures; do not call real services.
-# Security
-- Never include secrets in code or examples.
-- Use environment variables or placeholders like <API_KEY>.
-""")
-                    print(f"{GREEN}✔ Created .gcode/rules.md{RESET}")
-                else:
-                    print(f"{DIM}✔ .gcode/rules.md already exists.{RESET}")
-
-                # Create context.md
-                context_file = os.path.join(gcode_dir, "context.md")
-                if not os.path.exists(context_file):
-                    with open(context_file, "w", encoding="utf-8") as f:
-                        f.write("""# Project Context
-This is a [Project Type/Description].
-
-## Main Components
-- [Component 1]
-- [Component 2]
-
-## Tech Stack
-- Runtime: [e.g., Python 3.11, Node 20]
-- Dependencies: [List key packages]
-- Tools: [Docker, Makefile, etc.]
-
-## Conventions
-- Config via environment variables.
-- Error handling with structured logs.
-- CI runs tests and lint on every PR.
-""")
-                    print(f"{GREEN}✔ Created .gcode/context.md{RESET}")
-                else:
-                    print(f"{DIM}✔ .gcode/context.md already exists.{RESET}")
-
-                # Create prompts.md
-                prompts_file = os.path.join(gcode_dir, "prompts.md")
-                if not os.path.exists(prompts_file):
-                    with open(prompts_file, "w", encoding="utf-8") as f:
-                        f.write("""# Reusable Prompts
-## Add a module
-Create a new module that does X. Include:
-- A clear, typed interface
-- Error handling and logging
-- A small unit test with a fake
-
-## Improve performance
-Review this function for bottlenecks. Propose changes.
-Explain trade-offs in 3-5 bullet points.
-
-## Write docs
-Draft README instructions for running the project locally:
-- Prerequisites
-- Setup
-- Common commands
-- How to run tests
-""")
-                    print(f"{GREEN}✔ Created .gcode/prompts.md{RESET}")
-                else:
-                    print(f"{DIM}✔ .gcode/prompts.md already exists.{RESET}")
-                
-                print(f"{DIM}  Please fill out these files to guide the AI agent.{RESET}")
+                # Run init logic explicitly if user requests it (even if it exists)
+                re_init_messages = run_init(SCRIPT_DIR)
+                if re_init_messages:
+                    for msg in re_init_messages:
+                        messages.append(msg)
                 continue
             
             # --- NEW: CONFIGURATION COMMANDS ---
@@ -986,6 +1046,17 @@ Draft README instructions for running the project locally:
                     print(f"{YELLOW}Usage: /key <api_key>{RESET}")
                 continue
 
+            # --- NEW: AUTO-LOAD GCODE CONTEXT EVERY TURN ---
+            # This ensures that AI agent reads .gcode files (rules, context, prompts) AND skills
+            # before EVERY request. 
+            gcode_context = load_gcode_context(SCRIPT_DIR)
+            if gcode_context:
+                messages.append({"role": "system", "content": gcode_context})
+            else:
+                # Optional: Warn if folder is missing (but don't block)
+                # print(f"{DIM}⚠ No .gcode folder found. Consider running /init.{RESET}")
+                pass
+
             # --- RESOLVE @ REFERENCES ---
             # Pass SCRIPT_DIR so it resolves relative paths correctly
             processed_input, context_blocks = resolve_references(user_input, SCRIPT_DIR)
@@ -1005,7 +1076,7 @@ Draft README instructions for running the project locally:
             last_tool_signature = None
             repeat_counter = 0
             
-            # Track the VERY LAST tool executed to prevent hallucinated duplicates in one stream
+            # Track very last tool executed to prevent hallucinated duplicates in one stream
             last_executed_tool = None
             last_executed_args = None
 
@@ -1052,7 +1123,7 @@ Draft README instructions for running the project locally:
                                 break
 
                             # --- NEW: STRICT SEQUENTIAL EXECUTION CHECK ---
-                            # Block execution if the AI tries to run the EXACT same tool call 
+                            # Block execution if AI tries to run the EXACT same tool call 
                             # immediately after just running it (hallucinated urgency).
                             # We compare stringified args for easy comparison
                             current_sig_str = json.dumps(tool_args, sort_keys=True)
@@ -1060,7 +1131,7 @@ Draft README instructions for running the project locally:
                                 last_executed_args == current_sig_str):
                                 # We have a duplicate. Refuse execution.
                                 print(f"{RED}✗ Redundant tool call blocked: {tool_name}{RESET}")
-                                print(f"{YELLOW}  Reason: You just executed this command. Wait for the result before proceeding.{RESET}")
+                                print(f"{YELLOW}  Reason: You just executed this command. Wait for result before proceeding.{RESET}")
                                 tool_results.append({
                                     "type": "tool_result",
                                     "tool_use_id": block["id"],
