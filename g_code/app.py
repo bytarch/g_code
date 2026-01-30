@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""G Code - minimal claude code alternative (OpenAI Compatible + XML + Streaming + Chunked Writing + Auto-Retry + Pre-Check + @References + Tab Completion + Structure Awareness + Interrupt Support + Copy/Move + Current Directory CWD + Smart Read + Forced Chunking + Anti-Loop + Project Init + False Positive Fix + Claude-Style Config + Sequential Execution + Auto-Context-Refresh + Skills Integration + Auto-Setup + Skill Management)"""
+"""G Code - minimal claude code alternative (OpenAI Compatible + XML + Streaming + Chunked Writing + Auto-Retry + Pre-Check + @References + Tab Completion + Structure Awareness + Interrupt Support + Copy/Move + Current Directory CWD + Smart Read + Forced Chunking + Anti-Loop + Project Init + False Positive Fix + Claude-Style Config + Sequential Execution + Auto-Context-Refresh + Skills Integration + Auto-Setup + Direct Skill URL Management + Strict UTF-8 Decoding)"""
 
 import glob as globlib, json, os, re, subprocess, platform
 import shutil # For copy and move operations
@@ -449,46 +449,53 @@ def bash(args):
     return "".join(output_lines).strip() or "(empty)"
 
 
-# --- SKILL MANAGEMENT TOOLS (NEW) ---
+# --- SKILL MANAGEMENT TOOLS (FIXED DECODING) ---
 
 def skill_add(args):
     """
-    Adds a new skill using the external 'gs' CLI tool.
-    Usage: gs add <source> [--skill <subfolder>]
+    Adds a skill using 'gs add <url>'. 
+    Fixes Windows UnicodeDecodeError by explicitly decoding output as UTF-8.
     """
     source = args.get("source")
-    skill = args.get("skill")
     
     if not source:
-        return "error: missing 'source' parameter (URL or local path)"
+        return "error: missing 'source' parameter (e.g. 'https://github.com/user/repo/tree/main/skills')"
     
     base_dir = globals().get('SCRIPT_DIR', os.getcwd())
     
-    # Construct command based on provided examples
-    # e.g. gs add https://github.com/coreyhaines31/marketingskills --skill seo-audit
-    # or gs add ./path/to/skill
-    
-    cmd_parts = ["gs", "add", source]
-    
-    if skill:
-        cmd_parts.extend(["--skill", skill])
-        
-    cmd_str = " ".join(cmd_parts)
+    # Command: gs add <source>
+    cmd_str = f"gs add {source}"
     
     try:
         print(f"{CYAN}Executing: {cmd_str}{RESET}")
+        
+        # --- FIX: Force UTF-8 decoding ---
+        env = os.environ.copy()
+        env["PYTHONIOENCODING"] = "utf-8"
+        
         result = subprocess.run(
             cmd_str, 
             shell=True, 
             capture_output=True, 
-            text=True, 
-            cwd=base_dir
+            # STRICT: decode as utf-8, replace bad chars with '?'
+            encoding='utf-8', 
+            errors='replace',
+            cwd=base_dir,
+            env=env
         )
         
+        # Check if result object is valid (defensive)
+        if result is None:
+             return "error: subprocess failed to return a result."
+        
+        stdout_content = result.stdout if result.stdout else ""
+        stderr_content = result.stderr if result.stderr else ""
+        
         if result.returncode != 0:
-            return f"error: {result.stderr.strip()}"
+            error_msg = stderr_content.strip() or stdout_content.strip()
+            return f"error: {error_msg}"
             
-        return result.stdout.strip() or "Skill added successfully."
+        return stdout_content.strip() or "Skill added successfully."
         
     except FileNotFoundError:
         return "error: 'gs' command not found. Please ensure the 'gs' (gskill) CLI tool is installed and in your PATH."
@@ -498,25 +505,38 @@ def skill_add(args):
 
 def skill_list(args):
     """
-    Lists installed skills using the external 'gs' CLI tool.
-    Usage: gs ls
+    Lists installed skills using 'gs ls'.
+    Fixes Windows UnicodeDecodeError by explicitly decoding output as UTF-8.
     """
     base_dir = globals().get('SCRIPT_DIR', os.getcwd())
     
     try:
         print(f"{CYAN}Executing: gs ls{RESET}")
+        
+        # --- FIX: Force UTF-8 decoding ---
+        env = os.environ.copy()
+        env["PYTHONIOENCODING"] = "utf-8"
+        
         result = subprocess.run(
             "gs ls", 
             shell=True, 
             capture_output=True, 
-            text=True, 
-            cwd=base_dir
+            encoding='utf-8', 
+            errors='replace',
+            cwd=base_dir,
+            env=env
         )
         
+        if result is None:
+             return "error: subprocess failed to return a result."
+
+        stdout_content = result.stdout if result.stdout else ""
+        stderr_content = result.stderr if result.stderr else ""
+
         if result.returncode != 0:
-            return f"error: {result.stderr.strip()}"
+            return f"error: {stderr_content.strip()}"
             
-        return result.stdout.strip() or "No skills installed."
+        return stdout_content.strip() or "No skills installed."
         
     except FileNotFoundError:
         return "error: 'gs' command not found. Please ensure the 'gs' (gskill) CLI tool is installed."
@@ -526,8 +546,8 @@ def skill_list(args):
 
 def skill_remove(args):
     """
-    Removes an installed skill using the external 'gs' CLI tool.
-    Usage: gs rm <name>
+    Removes an installed skill using 'gs rm <name>'.
+    Fixes Windows UnicodeDecodeError by explicitly decoding output as UTF-8.
     """
     name = args.get("name")
     
@@ -538,18 +558,31 @@ def skill_remove(args):
     
     try:
         print(f"{CYAN}Executing: gs rm {name}{RESET}")
+        
+        # --- FIX: Force UTF-8 decoding ---
+        env = os.environ.copy()
+        env["PYTHONIOENCODING"] = "utf-8"
+        
         result = subprocess.run(
             f"gs rm {name}", 
             shell=True, 
             capture_output=True, 
-            text=True, 
-            cwd=base_dir
+            encoding='utf-8', 
+            errors='replace',
+            cwd=base_dir,
+            env=env
         )
         
+        if result is None:
+             return "error: subprocess failed to return a result."
+
+        stdout_content = result.stdout if result.stdout else ""
+        stderr_content = result.stderr if result.stderr else ""
+
         if result.returncode != 0:
-            return f"error: {result.stderr.strip()}"
+            return f"error: {stderr_content.strip()}"
             
-        return result.stdout.strip() or "Skill removed successfully."
+        return stdout_content.strip() or "Skill removed successfully."
         
     except FileNotFoundError:
         return "error: 'gs' command not found. Please ensure the 'gs' (gskill) CLI tool is installed."
@@ -611,20 +644,21 @@ TOOLS = {
         {"command": "string"},
         bash,
     ),
-    # --- NEW SKILL MANAGEMENT TOOLS ---
+    # --- UPDATED SKILL MANAGEMENT TOOLS ---
     "skill_add": (
-        "Install a new skill from a GitHub repository or local path. Wraps 'gs add'. "
-        "Use 'skill' arg if you need a specific subfolder from the repo.",
-        {"source": "string", "skill": "string?"},
+        "Install a new skill from a GitHub URL or local path. "
+        "Uses the command: 'gs add <source>'. "
+        "Pass the full URL (e.g. 'https://github.com/user/repo/tree/main/skills') to 'source'.",
+        {"source": "string"},
         skill_add,
     ),
     "skill_list": (
-        "List all currently installed skills. Wraps 'gs ls'.",
+        "List all currently installed skills. Uses the command: 'gs ls'.",
         {},
         skill_list,
     ),
     "skill_remove": (
-        "Remove an installed skill. Wraps 'gs rm'.",
+        "Remove an installed skill. Uses the command: 'gs rm <name>'.",
         {"name": "string"},
         skill_remove,
     ),
@@ -1034,9 +1068,9 @@ def main():
             "<write>{\"path\": \"newfile.html\", \"append_content\": \"<body>...</body>\"}</write>\n"
             "<copy>{\"src\": \"old_name.py\", \"dest\": \"new_name.py\"}</copy>\n"
             "<move>{\"src\": \"current_loc.py\", \"dest\": \"new_loc/current_loc.py\"}</move>\n"
-            "<skill_add>{\"source\": \"https://github.com/coreyhaines31/marketingskills\", \"skill\": \"seo-audit\"}</skill_add>\n"
+            "<skill_add>{\"source\": \"https://github.com/coreyhaines31/marketingskills/tree/main/skills\"}</skill_add>\n"
             "<skill_list>{}</skill_list>\n"
-            "<skill_remove>{\"name\": \"seo-audit\"}</skill_remove>\n"
+            "<skill_remove>{\"name\": \"copywriting\"}</skill_remove>\n"
             "<finish>{\"summary\": \"The file has been created successfully.\"}</finish>"
         )
 
@@ -1101,13 +1135,14 @@ def main():
         "   - **ALWAYS READ**: Check `.gcode/skills/` folder for architectural guidance or boilerplate code before implementing.\n"
         "   - **PRIORITIZE**: If a specific skill (e.g., 'FastAPI Route', 'React Component') exists in `.gcode/skills/`, you MUST use that implementation.\n"
         "   - **LEARN**: If you establish a new project pattern (e.g., 'Our Authentication Flow', 'Our Error Handling Wrapper'), save it as a `.md` file in `.gcode/skills/` for reuse.\n"
-        "16. EXTERNAL SKILL MANAGEMENT (NEW):\n"
-        "   - You have access to the `skill_add`, `skill_list`, and `skill_remove` tools.\n"
-        "   - These tools wrap the external 'gs' (gskill) CLI.\n"
-        "   - **ADDING SKILLS**: If you lack the capability to perform a task (e.g., creating a specific type of React component), "
-        "use <skill_add> to fetch a boilerplate from a known GitHub repository.\n"
-        "   - Example: <skill_add>{\"source\": \"https://github.com/user/repo\", \"skill\": \"subfolder-name\"}</skill_add>.\n"
-        "   - After adding, reload context or simply proceed; the system auto-loads skills at the start of turns.\n"
+        "16. EXTERNAL SKILL MANAGEMENT (UPDATED):\n"
+        "   - You have access to `skill_add`, `skill_list`, and `skill_remove`.\n"
+        "   - **ADDING SKILLS**: When the user says 'add this skill for me <URL>', extract the URL and use <skill_add>{\"source\": \"<URL>\"}</skill_add>.\n"
+        "   - Example: User: 'Add https://github.com/coreyhaines31/marketingskills/tree/main/skills'. "
+        "AI: <skill_add>{\"source\": \"https://github.com/coreyhaines31/marketingskills/tree/main/skills\"}</skill_add>.\n"
+        "   - **LISTING SKILLS**: When the user asks to list skills, use <skill_list>{}</skill_list>. This runs 'gs ls'.\n"
+        "   - **REMOVING SKILLS**: When the user asks to remove a skill (e.g. 'remove copywriting'), use <skill_remove>{\"name\": \"copywriting\"}</skill_remove>.\n"
+        "   - **NOTE**: After adding a skill, it will be available in `.gcode/skills/` for future context.\n"
         "17. SEQUENTIAL EXECUTION (CRITICAL):\n"
         "   - **CRITICAL**: Execute tools **ONE AT A TIME**.\n"
         "   - Wait for the tool result to complete before generating the next tool call.\n"
