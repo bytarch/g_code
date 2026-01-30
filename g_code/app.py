@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""G Code - minimal claude code alternative (OpenAI Compatible + XML + Streaming + Chunked Writing + Auto-Retry + Pre-Check + @References + Tab Completion + Structure Awareness + Interrupt Support + Copy/Move + Current Directory CWD + Smart Read + Forced Chunking + Anti-Loop + Project Init + False Positive Fix + Claude-Style Config + Sequential Execution + Auto-Context-Refresh + Skills Integration + Auto-Setup)"""
+"""G Code - minimal claude code alternative (OpenAI Compatible + XML + Streaming + Chunked Writing + Auto-Retry + Pre-Check + @References + Tab Completion + Structure Awareness + Interrupt Support + Copy/Move + Current Directory CWD + Smart Read + Forced Chunking + Anti-Loop + Project Init + False Positive Fix + Claude-Style Config + Sequential Execution + Auto-Context-Refresh + Skills Integration + Auto-Setup + Skill Management)"""
 
 import glob as globlib, json, os, re, subprocess, platform
 import shutil # For copy and move operations
@@ -449,6 +449,114 @@ def bash(args):
     return "".join(output_lines).strip() or "(empty)"
 
 
+# --- SKILL MANAGEMENT TOOLS (NEW) ---
+
+def skill_add(args):
+    """
+    Adds a new skill using the external 'gs' CLI tool.
+    Usage: gs add <source> [--skill <subfolder>]
+    """
+    source = args.get("source")
+    skill = args.get("skill")
+    
+    if not source:
+        return "error: missing 'source' parameter (URL or local path)"
+    
+    base_dir = globals().get('SCRIPT_DIR', os.getcwd())
+    
+    # Construct command based on provided examples
+    # e.g. gs add https://github.com/coreyhaines31/marketingskills --skill seo-audit
+    # or gs add ./path/to/skill
+    
+    cmd_parts = ["gs", "add", source]
+    
+    if skill:
+        cmd_parts.extend(["--skill", skill])
+        
+    cmd_str = " ".join(cmd_parts)
+    
+    try:
+        print(f"{CYAN}Executing: {cmd_str}{RESET}")
+        result = subprocess.run(
+            cmd_str, 
+            shell=True, 
+            capture_output=True, 
+            text=True, 
+            cwd=base_dir
+        )
+        
+        if result.returncode != 0:
+            return f"error: {result.stderr.strip()}"
+            
+        return result.stdout.strip() or "Skill added successfully."
+        
+    except FileNotFoundError:
+        return "error: 'gs' command not found. Please ensure the 'gs' (gskill) CLI tool is installed and in your PATH."
+    except Exception as e:
+        return f"error: {str(e)}"
+
+
+def skill_list(args):
+    """
+    Lists installed skills using the external 'gs' CLI tool.
+    Usage: gs ls
+    """
+    base_dir = globals().get('SCRIPT_DIR', os.getcwd())
+    
+    try:
+        print(f"{CYAN}Executing: gs ls{RESET}")
+        result = subprocess.run(
+            "gs ls", 
+            shell=True, 
+            capture_output=True, 
+            text=True, 
+            cwd=base_dir
+        )
+        
+        if result.returncode != 0:
+            return f"error: {result.stderr.strip()}"
+            
+        return result.stdout.strip() or "No skills installed."
+        
+    except FileNotFoundError:
+        return "error: 'gs' command not found. Please ensure the 'gs' (gskill) CLI tool is installed."
+    except Exception as e:
+        return f"error: {str(e)}"
+
+
+def skill_remove(args):
+    """
+    Removes an installed skill using the external 'gs' CLI tool.
+    Usage: gs rm <name>
+    """
+    name = args.get("name")
+    
+    if not name:
+        return "error: missing 'name' parameter"
+    
+    base_dir = globals().get('SCRIPT_DIR', os.getcwd())
+    
+    try:
+        print(f"{CYAN}Executing: gs rm {name}{RESET}")
+        result = subprocess.run(
+            f"gs rm {name}", 
+            shell=True, 
+            capture_output=True, 
+            text=True, 
+            cwd=base_dir
+        )
+        
+        if result.returncode != 0:
+            return f"error: {result.stderr.strip()}"
+            
+        return result.stdout.strip() or "Skill removed successfully."
+        
+    except FileNotFoundError:
+        return "error: 'gs' command not found. Please ensure the 'gs' (gskill) CLI tool is installed."
+    except Exception as e:
+        return f"error: {str(e)}"
+
+
 def finish(args):
     return "Task finished."
 
@@ -503,6 +611,24 @@ TOOLS = {
         {"command": "string"},
         bash,
     ),
+    # --- NEW SKILL MANAGEMENT TOOLS ---
+    "skill_add": (
+        "Install a new skill from a GitHub repository or local path. Wraps 'gs add'. "
+        "Use 'skill' arg if you need a specific subfolder from the repo.",
+        {"source": "string", "skill": "string?"},
+        skill_add,
+    ),
+    "skill_list": (
+        "List all currently installed skills. Wraps 'gs ls'.",
+        {},
+        skill_list,
+    ),
+    "skill_remove": (
+        "Remove an installed skill. Wraps 'gs rm'.",
+        {"name": "string"},
+        skill_remove,
+    ),
+    # -------------------------------
     "finish": (
         "MUST be called when task is COMPLETE. Stops agent.",
         {"summary": "string"},
@@ -908,6 +1034,9 @@ def main():
             "<write>{\"path\": \"newfile.html\", \"append_content\": \"<body>...</body>\"}</write>\n"
             "<copy>{\"src\": \"old_name.py\", \"dest\": \"new_name.py\"}</copy>\n"
             "<move>{\"src\": \"current_loc.py\", \"dest\": \"new_loc/current_loc.py\"}</move>\n"
+            "<skill_add>{\"source\": \"https://github.com/coreyhaines31/marketingskills\", \"skill\": \"seo-audit\"}</skill_add>\n"
+            "<skill_list>{}</skill_list>\n"
+            "<skill_remove>{\"name\": \"seo-audit\"}</skill_remove>\n"
             "<finish>{\"summary\": \"The file has been created successfully.\"}</finish>"
         )
 
@@ -972,12 +1101,19 @@ def main():
         "   - **ALWAYS READ**: Check `.gcode/skills/` folder for architectural guidance or boilerplate code before implementing.\n"
         "   - **PRIORITIZE**: If a specific skill (e.g., 'FastAPI Route', 'React Component') exists in `.gcode/skills/`, you MUST use that implementation.\n"
         "   - **LEARN**: If you establish a new project pattern (e.g., 'Our Authentication Flow', 'Our Error Handling Wrapper'), save it as a `.md` file in `.gcode/skills/` for reuse.\n"
-        "16. SEQUENTIAL EXECUTION (CRITICAL):\n"
+        "16. EXTERNAL SKILL MANAGEMENT (NEW):\n"
+        "   - You have access to the `skill_add`, `skill_list`, and `skill_remove` tools.\n"
+        "   - These tools wrap the external 'gs' (gskill) CLI.\n"
+        "   - **ADDING SKILLS**: If you lack the capability to perform a task (e.g., creating a specific type of React component), "
+        "use <skill_add> to fetch a boilerplate from a known GitHub repository.\n"
+        "   - Example: <skill_add>{\"source\": \"https://github.com/user/repo\", \"skill\": \"subfolder-name\"}</skill_add>.\n"
+        "   - After adding, reload context or simply proceed; the system auto-loads skills at the start of turns.\n"
+        "17. SEQUENTIAL EXECUTION (CRITICAL):\n"
         "   - **CRITICAL**: Execute tools **ONE AT A TIME**.\n"
         "   - Wait for the tool result to complete before generating the next tool call.\n"
         "   - DO NOT output multiple <tool> tags in a single response unless you are 100% certain they are independent sequential steps (e.g., create folder -> write file).\n"
         "   - If you output multiple tools with the same name/arguments, the system will block redundant ones.\n"
-        "17. TASK COMPLETION (MANDATORY):\n"
+        "18. TASK COMPLETION (MANDATORY):\n"
         "   - YOU MUST CALL THE 'finish' TOOL WHEN THE TASK IS DONE.\n"
         "   - Do NOT stop the conversation by simply writing text. You MUST invoke 'finish'.\n"
         "----------------------------------------\n\n"
@@ -1186,42 +1322,50 @@ def main():
                                     f"{GREEN}⏺ {tool_name.capitalize()}{RESET}({DIM}{arg_preview}{RESET})"
                                 )
                                 result_lines = result.split("\n")
-                                preview = result_lines[0][:60]
-                                if len(result_lines) > 1:
-                                    preview += f" ... +{len(result_lines) - 1} lines"
-                                elif len(result_lines[0]) > 60:
-                                    preview += "..."
-                                print(f"  {DIM}⎿  {preview}{RESET}")
+                                # Cleanly print multi-line results from tools
+                                for line in result_lines:
+                                    print(f"  {DIM}{line}{RESET}")
 
                                 tool_results.append({
                                     "type": "tool_result",
                                     "tool_use_id": block["id"],
-                                    "content": result,
+                                    "content": result
                                 })
+                    
+                    # Append tool results to message history
+                    if tool_results:
+                        messages.append({
+                            "role": "assistant",
+                            "content": content_blocks
+                        })
+                        messages.append({
+                            "role": "user",
+                            "content": tool_results
+                        })
 
                     if task_finished:
+                        # Reset messages for next task? Or keep?
+                        # Let's keep the last user prompt and the finish result for context, 
+                        # but maybe truncate the tool loop details? 
+                        # For now, keep everything until context limit.
                         break
-
-                    messages.append({"role": "assistant", "content": content_blocks})
-
-                    if not tool_results:
-                        break
-                    messages.append({"role": "user", "content": tool_results})
 
                 except KeyboardInterrupt:
-                    print(f"\n{YELLOW}[Interrupted]{RESET} User stopped the agent. Returning to main prompt...")
-                    break
-                
-                # If task_finished was set due to 3 failures or loops, break agent loop
-                if task_finished:
+                    # Handle Ctrl+C during agent processing
+                    print(f"\n{YELLOW}⚠ Interrupted by user.{RESET}")
+                    # Decide whether to break the inner loop (retry prompt) or outer loop (quit)
+                    # Usually in these tools, Ctrl+C just breaks the current thought process and returns to prompt
+                    break 
+                except Exception as e:
+                    print(f"{RED}Unexpected Error: {e}{RESET}")
                     break
 
-            print()
-
-        except (KeyboardInterrupt, EOFError):
+        except KeyboardInterrupt:
+            print(f"\n{YELLOW}Exiting...{RESET}")
             break
-        except Exception as err:
-            print(f"{RED}⏺ Error: {err}{RESET}")
+        except Exception as e:
+            print(f"{RED}Fatal Error: {e}{RESET}")
+            break
 
 
 if __name__ == "__main__":

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "g_code"
-version = "1.0.5"
+version = "1.1.0"
 description = "G Code is a minimal, high-performance CLI AI coding assistant designed as a lightweight alternative to Claude Code. It features a robust XML-based tool execution engine, streaming responses, auto-retry logic, and deep project structural awareness."
 readme = "README.md"
 requires-python = ">=3.9"  # Updated: Modern libraries now prefer 3.9+
