@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""G Code - minimal claude code alternative (OpenAI Compatible + XML + Streaming + Chunked Writing + Auto-Retry + Pre-Check + @References + Tab Completion + Structure Awareness + Interrupt Support + Copy/Move + Current Directory CWD + Smart Read + Forced Chunking + Anti-Loop + Project Init + False Positive Fix + Claude-Style Config + Sequential Execution + Auto-Context-Refresh + Skills Integration + Auto-Setup + Direct Skill URL Management + Strict UTF-8 Decoding)"""
+"""G Code - minimal claude code alternative (OpenAI Compatible + XML + Streaming + Chunked Writing + Auto-Retry + Pre-Check + @References + Tab Completion + Structure Awareness + Interrupt Support + Copy/Move + Current Directory CWD + Smart Read + Forced Chunking + Anti-Loop + Project Init + False Positive Fix + Claude-Style Config + Sequential Execution + Auto-Context-Refresh + Skills Integration + Auto-Setup + Direct Skill URL Management + Strict UTF-8 Decoding + Skill Search Completion)"""
 
 import glob as globlib, json, os, re, subprocess, platform
 import shutil # For copy and move operations
@@ -81,12 +81,39 @@ BLUE, CYAN, GREEN, YELLOW, RED, MAGENTA = (
 )
 
 
-# --- Tab Completion Logic ---
+# --- Tab Completion Logic (Enhanced for Skills) ---
 
 if HAS_PROMPT_TOOLKIT:
     class PathCompleter(Completer):
         def get_completions(self, document, complete_event):
             text = document.text_before_cursor
+            
+            # --- NEW: SKILL COMPLETION (triggered by /) ---
+            # If the user starts with /, we assume they want a skill
+            if text.startswith('/'):
+                # Stop completing if user has added a space (e.g. "/react ")
+                if ' ' in text:
+                    return
+
+                cwd = globals().get('SCRIPT_DIR', os.getcwd())
+                skills_dir = os.path.join(cwd, ".gcode", "skills")
+                
+                # Get the search term after the slash
+                search_part = text[1:]
+                
+                if os.path.exists(skills_dir):
+                    for entry in sorted(os.listdir(skills_dir)):
+                        if entry.endswith('.md') and entry.startswith(search_part):
+                            skill_name = entry[:-3] # Remove .md extension
+                            yield Completion(
+                                skill_name,
+                                start_position=-len(search_part),
+                                display_meta='Skill'
+                            )
+                return
+
+            # --- EXISTING: FILE REFERENCE COMPLETION (triggered by @) ---
+            # If not skill completion, check for file references
             last_at_index = text.rfind('@')
             if last_at_index == -1:
                 return
@@ -96,8 +123,7 @@ if HAS_PROMPT_TOOLKIT:
 
             search_part = text[last_at_index + 1:]
             
-            # --- NEW: Use GLOBAL SCRIPT_DIR (which is CWD) for completion ---
-            # This ensures completion works from the directory you are currently in
+            # Use GLOBAL SCRIPT_DIR (which is CWD) for completion
             cwd = globals().get('SCRIPT_DIR', os.getcwd())
             
             if '/' in search_part:
@@ -1168,6 +1194,22 @@ def main():
             print(separator())
             if not user_input:
                 continue
+            
+            # --- NEW: /skills COMMAND ---
+            if user_input in ("/skills", "/ls"):
+                skills_dir = os.path.join(SCRIPT_DIR, ".gcode", "skills")
+                if os.path.exists(skills_dir):
+                    skills = [f[:-3] for f in os.listdir(skills_dir) if f.endswith('.md')]
+                    if skills:
+                        print(f"{CYAN}Available Skills:{RESET}")
+                        for skill in sorted(skills):
+                            print(f"  - /{skill}")
+                    else:
+                        print(f"{YELLOW}No skills found in .gcode/skills/{RESET}")
+                else:
+                    print(f"{YELLOW}No .gcode/skills folder found.{RESET}")
+                continue
+
             if user_input in ("/q", "exit"):
                 break
             if user_input == "/c":
@@ -1225,10 +1267,27 @@ def main():
                 # print(f"{DIM}⚠ No .gcode folder found. Consider running /init.{RESET}")
                 pass
 
-            # --- RESOLVE @ REFERENCES ---
+            # --- RESOLVE @ REFERENCES AND / SKILLS ---
             # Pass SCRIPT_DIR so it resolves relative paths correctly
             processed_input, context_blocks = resolve_references(user_input, SCRIPT_DIR)
                 
+            # --- NEW: INJECT SKILL CONTEXT IF MENTIONED ---
+            # Check if user mentioned a skill like "/react-component" or "use /react-component"
+            # Logic: find word starting with / that is not a command
+            mentioned_skills = re.findall(r'/(?P<skill>[\w-]+)', processed_input)
+            
+            skills_dir = os.path.join(SCRIPT_DIR, ".gcode", "skills")
+            for skill_name in mentioned_skills:
+                skill_path = os.path.join(skills_dir, f"{skill_name}.md")
+                if os.path.exists(skill_path):
+                    print(f"{CYAN}Loading skill context: /{skill_name}{RESET}")
+                    try:
+                        with open(skill_path, "r", encoding="utf-8") as f:
+                            content = f.read()
+                        context_blocks.append(f"<gcode_skill_{skill_name}>\n{content}\n</gcode_skill_{skill_name}>")
+                    except Exception as e:
+                        pass
+            
             for block in context_blocks:
                 messages.append({"role": "system", "content": block})
                 
